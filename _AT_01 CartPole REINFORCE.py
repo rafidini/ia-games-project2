@@ -67,29 +67,28 @@ class Net(nn.Module):
         Forward.
         """
         # Couche input
-        x_1 = self.couche1(x)
-        x_1 = F.relu(x_1)
+        output = self.couche1(x)
+        output = F.relu(output)
 
-        # Couche intermediaire
-        x_2 = self.couche2(x_1)
-
-        # Output layer
-        output = self.couche_output(x_2)
+        output = self.couche2(output) # Couche intermediaire
+        output = self.couche_output(output) # Output layer
 
         return output
 
-    def Loss(self, R, LogProbas):
+    def LossV1(self, R, LogProbas):
         """
-        Fonction de cout.
+        V1 Fonction de cout.
         """
-        loss_policy = list()
-        
-        for log_prob, reward in zip(LogProbas, R):
-            loss_policy.append(-log_prob * reward)
-
-        loss_policy = torch.cat(loss_policy).sum()
-
-        return loss_policy
+        loss_res = -(torch.FloatTensor(R) * torch.FloatTensor(LogProbas)).sum()
+        loss_res.requires_grad_(True)
+        return loss_res
+    
+    def Loss(self, values):
+        """
+        V2 Fonction de cout.
+        """
+        loss_res = values.sum()
+        return loss_res
     
 def GetAction(x: int) -> int:
     """
@@ -121,72 +120,77 @@ def pi(probas_scores):
     return index_action.item(), log_prob
 
 # Parametres des simulations
-RENDER: bool = False
-LOG_STEP: int = 20
-N_SIMULATIONS: int = int(1e3)
-results: dict = {
-    'scores': []
-}
+RENDER: bool = True
+LOG_STEP: int = 100
+N_SIMULATIONS: int = int(1e4)
+results: dict = {'scores': []}
 
 # Parametres de politique
-LEARNING_RATE: float = 0.015
-policy = Net()
-optimizer = torch.optim.Adam(policy.parameters(), lr=LEARNING_RATE)
+LEARNING_RATE: float = 0.01
+POLICY = Net()
+OPTIMIZER = torch.optim.Adam(POLICY.parameters(), lr=LEARNING_RATE)
 
 # Main game loop
 for n in range(N_SIMULATIONS):
     # Gestion d'une simulation
     done = False
     state = env.reset()
-    TotalReward = list()
-    LogProbas = list()
+    TotalReward = []
+    LogProbas = torch.FloatTensor([])
+    LossTheta = 0
+
     env.reset()
 
     while not done:
         # Affiche la simulation
-        if RENDER:
+        if RENDER and n % LOG_STEP == 0:
           w = env.render()
 
         # Récupère la position du chariot
-        x = state[0]
+        #x = state[0]
 
-        # TODO Decide de l'action à effectuer
+        # Decide de l'action à effectuer
         #action = GetAction(x)
         tensor_state = torch.reshape(torch.FloatTensor(state), (1, -1))
-        action_probas = policy.forward(tensor_state)
+        action_probas = POLICY(tensor_state)
         action, log_prob = pi(action_probas)
         
         # Mise à jour de l'environnement
         state, reward, done, _ = env.step(action)
 
-        # TODO Sauvegarde reward & log proba
+        # Sauvegarde reward & log proba
         TotalReward.append(reward)
-        LogProbas.append(log_prob)
+        LogProbas = torch.cat((LogProbas, log_prob), 0)
 
         # Frequence de rafraichissement de l'animation
-        if RENDER:
-            time.sleep(0.01)
+        if RENDER and n % LOG_STEP == 0:
+            time.sleep(0.005)
     
-    # TODO Calcul de la loss
-    LossTheta = policy.Loss(TotalReward, LogProbas)
+    # Calcul de la loss
+    LossTheta = torch.sum(-torch.FloatTensor(TotalReward)) * torch.sum(LogProbas)
 
-    # TODO Descente du gradient
-    optimizer.zero_grad()
+    # Descente du gradient
+    OPTIMIZER.zero_grad()
     LossTheta.backward()
-    optimizer.step()
+    OPTIMIZER.step()
 
     # Log du score
     if n % LOG_STEP == 0:
-        print(f"[{n+1}/{N_SIMULATIONS}] - Score({sum(TotalReward)}) - Loss({round(LossTheta.item(), 1)})")
+        score_reward = sum(TotalReward)
+        loss_value = round(LossTheta.item(), 1)
+        print(f"[{n}/{N_SIMULATIONS}] - Score({score_reward}) - Loss({loss_value})")
+
     results['scores'].append(sum(TotalReward))
 
 # Affichage des resultats
 SPACING: int = 50
+print()
 print("-" * SPACING)
+print(f"| -> Paramètres".ljust(SPACING-1) + '|')
 print(f'| Nombre de simulations : {N_SIMULATIONS}'.ljust(SPACING-1) + '|')
 print(f"| Learning rate         : {LEARNING_RATE}".ljust(SPACING-1) + '|')
 print("|".ljust(SPACING-1) + '|')
-print(f"| >> Resultats".ljust(SPACING-1) + '|')
+print(f"| -> Resultats".ljust(SPACING-1) + '|')
 print(f"| Reward moyen          : {sum(results['scores']) / len(results['scores'])}".ljust(SPACING-1) + '|')
 print("-" * SPACING)
 
